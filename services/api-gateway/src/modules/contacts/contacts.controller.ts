@@ -49,7 +49,7 @@ import {
 @ApiBearerAuth()
 @ApiHeader({ name: 'X-Tenant-ID', required: true, description: 'Tenant identifier' })
 @ApiHeader({ name: 'X-Correlation-ID', required: false, description: 'Request correlation ID for tracing' })
-@Controller('api/v1/contacts')
+@Controller('contacts')
 export class ContactsController {
   private readonly logger: AppLoggerService;
 

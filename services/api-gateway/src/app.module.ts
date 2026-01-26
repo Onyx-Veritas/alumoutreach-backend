@@ -6,13 +6,11 @@ import { APP_FILTER } from '@nestjs/core';
 
 // Modules
 import { ContactsModule } from './modules/contacts/contacts.module';
-import { TemplatesModule } from './modules/templates/templates.module';
 import { SegmentsModule } from './modules/segments/segments.module';
+import { TemplatesModule } from './modules/templates/templates.module';
 import { CampaignsModule } from './modules/campaigns/campaigns.module';
+import { PipelineModule } from './modules/pipeline/pipeline.module';
 import { WorkflowsModule } from './modules/workflows/workflows.module';
-import { SequencesModule } from './modules/sequences/sequences.module';
-import { InboxModule } from './modules/inbox/inbox.module';
-import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
 
 // Logging
@@ -20,7 +18,7 @@ import { LoggerModule } from './common/logger/logger.module';
 import { RequestLoggingMiddleware } from './common/middleware/request-logging.middleware';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
-// Entities
+// Entities - Contacts
 import { Contact } from './modules/contacts/entities/contact.entity';
 import { ChannelIdentifier } from './modules/contacts/entities/channel-identifier.entity';
 import { ContactAttribute } from './modules/contacts/entities/contact-attribute.entity';
@@ -28,6 +26,29 @@ import { ContactConsent } from './modules/contacts/entities/contact-consent.enti
 import { ContactTag } from './modules/contacts/entities/contact-tag.entity';
 import { ContactTagMapping } from './modules/contacts/entities/contact-tag-mapping.entity';
 import { ContactTimelineEvent } from './modules/contacts/entities/contact-timeline-event.entity';
+
+// Entities - Segments
+import { Segment } from './modules/segments/entities/segment.entity';
+import { SegmentMember } from './modules/segments/entities/segment-member.entity';
+
+// Entities - Templates
+import { Template } from './modules/templates/entities/template.entity';
+import { TemplateVersion } from './modules/templates/entities/template-version.entity';
+import { TemplateUsageStats } from './modules/templates/entities/template-usage-stats.entity';
+
+// Entities - Campaigns
+import { Campaign } from './modules/campaigns/entities/campaign.entity';
+import { CampaignRun } from './modules/campaigns/entities/campaign-run.entity';
+import { CampaignMessage } from './modules/campaigns/entities/campaign-message.entity';
+
+// Entities - Pipeline
+import { PipelineJob } from './modules/pipeline/entities/pipeline-job.entity';
+import { PipelineFailure } from './modules/pipeline/entities/pipeline-failure.entity';
+
+// Entities - Workflows
+import { Workflow } from './modules/workflows/entities/workflow.entity';
+import { WorkflowRun } from './modules/workflows/entities/workflow-run.entity';
+import { WorkflowNodeRun } from './modules/workflows/entities/workflow-node-run.entity';
 
 @Module({
   imports: [
@@ -55,6 +76,7 @@ import { ContactTimelineEvent } from './modules/contacts/entities/contact-timeli
         password: configService.get('DB_PASSWORD', 'postgres'),
         database: configService.get('DB_DATABASE', 'alumoutreach'),
         entities: [
+          // Contact entities
           Contact,
           ChannelIdentifier,
           ContactAttribute,
@@ -62,6 +84,24 @@ import { ContactTimelineEvent } from './modules/contacts/entities/contact-timeli
           ContactTag,
           ContactTagMapping,
           ContactTimelineEvent,
+          // Segment entities
+          Segment,
+          SegmentMember,
+          // Template entities
+          Template,
+          TemplateVersion,
+          TemplateUsageStats,
+          // Campaign entities
+          Campaign,
+          CampaignRun,
+          CampaignMessage,
+          // Pipeline entities
+          PipelineJob,
+          PipelineFailure,
+          // Workflow entities
+          Workflow,
+          WorkflowRun,
+          WorkflowNodeRun,
         ],
         synchronize: configService.get('NODE_ENV') !== 'production',
         logging: configService.get('DB_LOGGING', 'false') === 'true',
@@ -83,13 +123,11 @@ import { ContactTimelineEvent } from './modules/contacts/entities/contact-timeli
     // Feature Modules
     HealthModule,
     ContactsModule,
-    TemplatesModule,
     SegmentsModule,
+    TemplatesModule,
     CampaignsModule,
+    PipelineModule,
     WorkflowsModule,
-    SequencesModule,
-    InboxModule,
-    AnalyticsModule,
   ],
   providers: [
     // Global exception filter
