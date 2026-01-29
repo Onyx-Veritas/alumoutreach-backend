@@ -182,14 +182,9 @@ export class SegmentRefreshJobService implements OnModuleInit, OnModuleDestroy {
         batchId,
       );
 
-      // Update next refresh time
-      if (segment.refreshIntervalMinutes) {
-        await this.segmentRepository.updateNextRefreshTime(
-          segment.tenantId,
-          segment.id,
-          segment.refreshIntervalMinutes,
-        );
-      }
+      // NOTE: refreshIntervalMinutes and nextRefreshAt columns do not exist
+      // in the current database schema (005_segments.sql).
+      // Next refresh scheduling would need those columns added via migration.
 
       // Publish refresh event
       await this.publishRefreshEvent(segment, result, batchId);

@@ -1,4 +1,4 @@
-export enum Channel {
+ export enum Channel {
   EMAIL = 'email',
   SMS = 'sms',
   WHATSAPP = 'whatsapp',

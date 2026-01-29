@@ -21,6 +21,9 @@ import { LoggerModule } from './common/logger/logger.module';
 import { RequestLoggingMiddleware } from './common/middleware/request-logging.middleware';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
+// Schema validation at startup
+import { SchemaGuardService } from './common/guards/schema-guard.service';
+
 // Entities - Contacts
 import { Contact } from './modules/contacts/entities/contact.entity';
 import { ChannelIdentifier } from './modules/contacts/entities/channel-identifier.entity';
@@ -124,7 +127,11 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
           InboxMessage,
           InboxActivity,
         ],
-        synchronize: configService.get('NODE_ENV') !== 'production',
+        // CRITICAL: synchronize is ALWAYS false
+        // SQL migrations are the source of truth for database schema
+        // TypeORM entities must match migrations exactly
+        // Use SchemaGuardService to detect drift at startup
+        synchronize: false,
         logging: configService.get('DB_LOGGING', 'false') === 'true',
         ssl: configService.get('DB_SSL', 'false') === 'true'
           ? { rejectUnauthorized: false }
@@ -159,6 +166,8 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
     },
+    // Schema validation at startup (compares DB to expected schema)
+    SchemaGuardService,
   ],
 })
 export class AppModule implements NestModule {
