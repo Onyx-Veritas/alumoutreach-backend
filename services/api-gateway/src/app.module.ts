@@ -15,6 +15,7 @@ import { SequencesModule } from './modules/sequences/sequences.module';
 import { InboxModule } from './modules/inbox/inbox.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
+import { DevModule } from './dev/dev.module';
 
 // Logging
 import { LoggerModule } from './common/logger/logger.module';
@@ -147,6 +148,9 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
 
     // Logging
     LoggerModule,
+
+    // Dev Playground (load FIRST to avoid module ordering issues)
+    DevModule,
 
     // Feature Modules
     HealthModule,
