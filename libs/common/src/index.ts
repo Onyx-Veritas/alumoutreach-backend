@@ -21,6 +21,7 @@ export * from './decorators/current-user.decorator';
 // Constants
 export * from './constants/channels';
 export * from './constants/events';
+export * from './constants/system';
 
 // Utils
 export * from './utils/id-generator';

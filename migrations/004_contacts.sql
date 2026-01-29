@@ -376,6 +376,7 @@ CREATE TABLE IF NOT EXISTS contact_timeline_events (
     user_agent          TEXT,
     occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     actor_id            UUID,
+    actor_type          VARCHAR(50),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

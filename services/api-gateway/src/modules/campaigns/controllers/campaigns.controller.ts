@@ -25,6 +25,7 @@ import {
 import { CampaignsService } from '../services/campaigns.service';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { SYSTEM_USER_ID } from '../../../common/constants/system';
 import { CorrelationId } from '../../../common/decorators/correlation-id.decorator';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
 import {
@@ -70,7 +71,7 @@ export class CampaignsController {
     @Body() dto: CreateCampaignDto,
   ): Promise<{ success: boolean; data: CampaignResponseDto }> {
     this.logger.debug('Create campaign request received', { tenantId, correlationId });
-    const campaign = await this.campaignsService.create(tenantId, dto, userId || 'system', correlationId);
+    const campaign = await this.campaignsService.create(tenantId, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: campaign };
   }
 
@@ -126,7 +127,7 @@ export class CampaignsController {
     @Body() dto: UpdateCampaignDto,
   ): Promise<{ success: boolean; data: CampaignResponseDto }> {
     this.logger.debug('Update campaign request', { tenantId, id, correlationId });
-    const campaign = await this.campaignsService.update(tenantId, id, dto, userId || 'system', correlationId);
+    const campaign = await this.campaignsService.update(tenantId, id, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: campaign };
   }
 
@@ -146,7 +147,7 @@ export class CampaignsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     this.logger.debug('Delete campaign request', { tenantId, id, correlationId });
-    await this.campaignsService.delete(tenantId, id, userId || 'system', correlationId);
+    await this.campaignsService.delete(tenantId, id, userId || SYSTEM_USER_ID, correlationId);
   }
 
   // ============ PREVIEW ============
@@ -187,7 +188,7 @@ export class CampaignsController {
     @Body() dto: ScheduleCampaignDto,
   ): Promise<{ success: boolean; data: CampaignResponseDto }> {
     this.logger.debug('Schedule campaign request', { tenantId, id, scheduleAt: dto.scheduleAt, correlationId });
-    const campaign = await this.campaignsService.schedule(tenantId, id, dto, userId || 'system', correlationId);
+    const campaign = await this.campaignsService.schedule(tenantId, id, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: campaign };
   }
 
@@ -206,7 +207,7 @@ export class CampaignsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<{ success: boolean; data: CampaignResponseDto }> {
     this.logger.debug('Cancel campaign request', { tenantId, id, correlationId });
-    const campaign = await this.campaignsService.cancel(tenantId, id, userId || 'system', correlationId);
+    const campaign = await this.campaignsService.cancel(tenantId, id, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: campaign };
   }
 

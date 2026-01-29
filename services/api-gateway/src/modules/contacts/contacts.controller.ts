@@ -28,6 +28,7 @@ import {
 import { ContactsService } from './contacts.service';
 import { Tenant, TenantId } from '../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { SYSTEM_USER_ID } from '../../common/constants/system';
 import { CorrelationId } from '../../common/decorators/correlation-id.decorator';
 import { AppLoggerService } from '../../common/logger/app-logger.service';
 import {
@@ -75,7 +76,7 @@ export class ContactsController {
     @Body() dto: CreateContactDto,
   ): Promise<{ success: boolean; data: ContactResponseDto }> {
     this.logger.debug('Create contact request received', { tenantId, correlationId });
-    const contact = await this.contactsService.create(tenantId, dto, userId || 'system', correlationId);
+    const contact = await this.contactsService.create(tenantId, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: contact };
   }
 
@@ -157,7 +158,7 @@ export class ContactsController {
     @Body() dto: UpdateContactDto,
   ): Promise<{ success: boolean; data: ContactResponseDto }> {
     this.logger.debug('Update contact request', { tenantId, contactId: id });
-    const contact = await this.contactsService.update(tenantId, id, dto, userId || 'system', correlationId);
+    const contact = await this.contactsService.update(tenantId, id, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: contact };
   }
 
@@ -176,7 +177,7 @@ export class ContactsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     this.logger.debug('Delete contact request', { tenantId, contactId: id });
-    await this.contactsService.delete(tenantId, id, userId || 'system', correlationId);
+    await this.contactsService.delete(tenantId, id, userId || SYSTEM_USER_ID, correlationId);
   }
 
   // ============ TAGS ============
@@ -196,7 +197,7 @@ export class ContactsController {
     @Body() dto: AddTagDto,
   ): Promise<{ success: boolean; data: ContactResponseDto }> {
     this.logger.debug('Add tag request', { tenantId, contactId: id, tagId: dto.tagId });
-    const contact = await this.contactsService.addTag(tenantId, id, dto, userId || 'system', correlationId);
+    const contact = await this.contactsService.addTag(tenantId, id, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: contact };
   }
 
@@ -214,7 +215,7 @@ export class ContactsController {
     @Param('tagId', ParseUUIDPipe) tagId: string,
   ): Promise<{ success: boolean; data: ContactResponseDto }> {
     this.logger.debug('Remove tag request', { tenantId, contactId: id, tagId });
-    const contact = await this.contactsService.removeTag(tenantId, id, tagId, userId || 'system', correlationId);
+    const contact = await this.contactsService.removeTag(tenantId, id, tagId, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: contact };
   }
 
@@ -235,7 +236,7 @@ export class ContactsController {
     @Body() dto: AddAttributeDto,
   ): Promise<{ success: boolean; data: AttributeResponseDto }> {
     this.logger.debug('Add/update attribute request', { tenantId, contactId: id, key: dto.key });
-    const attribute = await this.contactsService.addOrUpdateAttribute(tenantId, id, dto, userId || 'system', correlationId);
+    const attribute = await this.contactsService.addOrUpdateAttribute(tenantId, id, dto, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: attribute };
   }
 
@@ -281,7 +282,7 @@ export class ContactsController {
       tenantId,
       id,
       dto,
-      userId || 'system',
+      userId || SYSTEM_USER_ID,
       correlationId,
       ipAddress,
       userAgent,
