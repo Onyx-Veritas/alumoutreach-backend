@@ -6,10 +6,10 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
-import { PipelineJobStatus, PipelineChannel } from './pipeline.enums';
+import { PipelineJobStatus, PipelineChannel, PipelineSkipReason } from './pipeline.enums';
 
 // Re-export enums for convenience
-export { PipelineJobStatus, PipelineChannel } from './pipeline.enums';
+export { PipelineJobStatus, PipelineChannel, PipelineSkipReason } from './pipeline.enums';
 
 // ============ PipelineJob Entity ============
 
@@ -68,14 +68,30 @@ export class PipelineJob {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage?: string;
 
+  @Column({ name: 'skip_reason', type: 'enum', enum: PipelineSkipReason, nullable: true })
+  skipReason?: PipelineSkipReason;
+
   @Column({ name: 'provider_message_id', nullable: true })
   providerMessageId?: string;
+
+  // Transition timestamps for state tracking
+  @Column({ name: 'queued_at', type: 'timestamptz', nullable: true })
+  queuedAt?: Date;
+
+  @Column({ name: 'processing_at', type: 'timestamptz', nullable: true })
+  processingAt?: Date;
 
   @Column({ name: 'sent_at', type: 'timestamptz', nullable: true })
   sentAt?: Date;
 
   @Column({ name: 'delivered_at', type: 'timestamptz', nullable: true })
   deliveredAt?: Date;
+
+  @Column({ name: 'failed_at', type: 'timestamptz', nullable: true })
+  failedAt?: Date;
+
+  @Column({ name: 'skipped_at', type: 'timestamptz', nullable: true })
+  skippedAt?: Date;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

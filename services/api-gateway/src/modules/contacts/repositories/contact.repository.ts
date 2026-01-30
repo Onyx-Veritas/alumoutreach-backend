@@ -79,6 +79,34 @@ export class ContactRepository {
     }
   }
 
+  async findByIds(tenantId: string, ids: string[]): Promise<Contact[]> {
+    if (ids.length === 0) return [];
+
+    const startTime = this.logger.logOperationStart('find contacts by ids', { 
+      tenantId, 
+      count: ids.length,
+    });
+
+    try {
+      const contacts = await this.contactRepo.find({
+        where: { 
+          id: In(ids), 
+          tenantId, 
+          isDeleted: false,
+        },
+        relations: ['attributes'],
+      });
+
+      this.logger.logDbQuery('SELECT contacts by ids', contacts.length, { tenantId, requestedCount: ids.length });
+      this.logger.logOperationEnd('find contacts by ids', startTime, { found: contacts.length });
+
+      return contacts;
+    } catch (error) {
+      this.logger.logOperationError('find contacts by ids', error as Error, { tenantId });
+      throw error;
+    }
+  }
+
   async findByEmail(tenantId: string, email: string): Promise<Contact | null> {
     this.logger.logDbQuery('SELECT contact by email', undefined, { tenantId });
 

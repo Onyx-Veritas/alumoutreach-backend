@@ -11,8 +11,9 @@ import { TemplateUsageStats } from './entities/template-usage-stats.entity';
 // Repository
 import { TemplateRepository } from './repositories/template.repository';
 
-// Service
+// Services
 import { TemplatesService } from './services/templates.service';
+import { PipelineTemplateService } from './services/pipeline-template.service';
 
 // Controller
 import { TemplatesController } from './controllers/templates.controller';
@@ -53,6 +54,7 @@ import { TemplateRendererService } from './render/template-renderer.service';
   controllers: [TemplatesController],
   providers: [
     TemplatesService,
+    PipelineTemplateService,
     TemplateRepository,
     TemplateMapper,
     EmailTemplateValidator,
@@ -63,6 +65,12 @@ import { TemplateRendererService } from './render/template-renderer.service';
     TemplateValidatorFactory,
     TemplateRendererService,
   ],
-  exports: [TemplatesService, TemplateRepository, TemplateValidatorFactory, TemplateRendererService],
+  exports: [
+    TemplatesService,
+    PipelineTemplateService,
+    TemplateRepository,
+    TemplateValidatorFactory,
+    TemplateRendererService,
+  ],
 })
 export class TemplatesModule {}

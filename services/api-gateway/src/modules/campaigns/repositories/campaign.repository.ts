@@ -186,6 +186,31 @@ export class CampaignRepository {
     }
   }
 
+  /**
+   * Find all scheduled campaigns globally (across all tenants) that are due
+   */
+  async findScheduledCampaignsGlobal(beforeDate: Date, limit: number = 10): Promise<Campaign[]> {
+    const startTime = this.logger.logOperationStart('find scheduled campaigns global', { beforeDate, limit });
+
+    try {
+      const qb = this.campaignRepo.createQueryBuilder('c');
+      const campaigns = await qb
+        .where('c.status = :status', { status: CampaignStatus.SCHEDULED })
+        .andWhere('c.schedule_at <= :beforeDate', { beforeDate })
+        .andWhere('c.is_deleted = false')
+        .orderBy('c.schedule_at', 'ASC')
+        .take(limit)
+        .getMany();
+
+      this.logger.logDbQuery('SELECT scheduled campaigns global', campaigns.length, { limit });
+      this.logger.logOperationEnd('find scheduled campaigns global', startTime, { found: campaigns.length });
+      return campaigns;
+    } catch (error) {
+      this.logger.logOperationError('find scheduled campaigns global', error as Error);
+      throw error;
+    }
+  }
+
   // ============ Campaign Run CRUD ============
 
   async createRun(run: CampaignRun): Promise<CampaignRun> {

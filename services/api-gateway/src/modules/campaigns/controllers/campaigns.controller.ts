@@ -23,6 +23,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { CampaignsService } from '../services/campaigns.service';
+import { CampaignExecutorService, ExecuteCampaignResult } from '../services/campaign-executor.service';
 import { TenantId } from '../../../common/decorators/tenant.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { SYSTEM_USER_ID } from '../../../common/constants/system';
@@ -49,7 +50,10 @@ import {
 export class CampaignsController {
   private readonly logger: AppLoggerService;
 
-  constructor(private readonly campaignsService: CampaignsService) {
+  constructor(
+    private readonly campaignsService: CampaignsService,
+    private readonly campaignExecutor: CampaignExecutorService,
+  ) {
     this.logger = new AppLoggerService();
     this.logger.setContext('CampaignsController');
     this.logger.info('CampaignsController initialized');
@@ -209,6 +213,83 @@ export class CampaignsController {
     this.logger.debug('Cancel campaign request', { tenantId, id, correlationId });
     const campaign = await this.campaignsService.cancel(tenantId, id, userId || SYSTEM_USER_ID, correlationId);
     return { success: true, data: campaign };
+  }
+
+  // ============ EXECUTE ============
+
+  @Post(':id/execute')
+  @ApiOperation({ 
+    summary: 'Execute a campaign immediately', 
+    description: 'Starts campaign execution immediately using BullMQ. Creates pipeline jobs for all contacts in the segment.' 
+  })
+  @ApiParam({ name: 'id', description: 'Campaign ID (UUID)' })
+  @ApiResponse({ status: 200, description: 'Campaign execution started successfully' })
+  @ApiResponse({ status: 400, description: 'Cannot execute campaign - missing required fields or invalid status' })
+  @ApiResponse({ status: 404, description: 'Campaign not found' })
+  async execute(
+    @TenantId() tenantId: string,
+    @CurrentUser('userId') userId: string,
+    @CorrelationId() correlationId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ success: boolean; data: ExecuteCampaignResult }> {
+    this.logger.debug('Execute campaign request', { tenantId, id, correlationId });
+    const result = await this.campaignExecutor.execute({
+      campaignId: id,
+      tenantId,
+      userId: userId || SYSTEM_USER_ID,
+      correlationId,
+      dryRun: false,
+    });
+    return { success: result.success, data: result };
+  }
+
+  @Post(':id/execute/dry-run')
+  @ApiOperation({ 
+    summary: 'Dry run campaign execution', 
+    description: 'Validates campaign execution without actually sending messages. Returns the number of recipients that would receive the campaign.' 
+  })
+  @ApiParam({ name: 'id', description: 'Campaign ID (UUID)' })
+  @ApiResponse({ status: 200, description: 'Dry run completed successfully' })
+  @ApiResponse({ status: 400, description: 'Cannot execute campaign - missing required fields or invalid status' })
+  @ApiResponse({ status: 404, description: 'Campaign not found' })
+  async executeDryRun(
+    @TenantId() tenantId: string,
+    @CurrentUser('userId') userId: string,
+    @CorrelationId() correlationId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ success: boolean; data: ExecuteCampaignResult }> {
+    this.logger.debug('Execute campaign dry-run request', { tenantId, id, correlationId });
+    const result = await this.campaignExecutor.execute({
+      campaignId: id,
+      tenantId,
+      userId: userId || SYSTEM_USER_ID,
+      correlationId,
+      dryRun: true,
+    });
+    return { success: result.success, data: result };
+  }
+
+  @Get(':id/execution-stats/:runId')
+  @ApiOperation({ 
+    summary: 'Get campaign execution stats', 
+    description: 'Retrieves the current execution stats for a specific campaign run' 
+  })
+  @ApiParam({ name: 'id', description: 'Campaign ID (UUID)' })
+  @ApiParam({ name: 'runId', description: 'Campaign Run ID (UUID)' })
+  @ApiResponse({ status: 200, description: 'Execution stats retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Campaign run not found' })
+  async getExecutionStats(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('runId', ParseUUIDPipe) runId: string,
+  ): Promise<{ success: boolean; data: any }> {
+    this.logger.debug('Get execution stats request', { tenantId, campaignId: id, runId, correlationId });
+    const stats = await this.campaignExecutor.getExecutionStats(tenantId, runId);
+    if (!stats) {
+      return { success: false, data: null };
+    }
+    return { success: true, data: stats };
   }
 
   // ============ MESSAGES ============

@@ -30,6 +30,7 @@ export class PipelineWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly pollIntervalMs = 1000; // Poll every second
   private readonly maxConcurrent = 10; // Max concurrent jobs
   private activeJobs = 0;
+  private readonly useBullMQ: boolean;
 
   constructor(
     private readonly pipelineRepository: PipelineRepository,
@@ -37,10 +38,18 @@ export class PipelineWorkerService implements OnModuleInit, OnModuleDestroy {
   ) {
     this.logger = new AppLoggerService();
     this.logger.setContext('PipelineWorkerService');
+    
+    // Check if BullMQ is enabled - if so, disable this polling worker
+    // BullMQ is now the default execution engine
+    this.useBullMQ = process.env.PIPELINE_USE_BULLMQ !== 'false';
   }
 
   async onModuleInit(): Promise<void> {
-    // Start worker in background
+    if (this.useBullMQ) {
+      this.logger.info('BullMQ is the active execution engine - polling worker DISABLED');
+      return;
+    }
+    // Start worker in background (legacy fallback only)
     this.start();
   }
 
@@ -49,16 +58,21 @@ export class PipelineWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Start the worker
+   * Start the worker (legacy mode only)
    */
   start(): void {
+    if (this.useBullMQ) {
+      this.logger.warn('Cannot start polling worker - BullMQ is enabled');
+      return;
+    }
+    
     if (this.isRunning) {
       this.logger.warn('Worker already running');
       return;
     }
 
     this.isRunning = true;
-    this.logger.info('Starting pipeline worker', {
+    this.logger.info('Starting pipeline worker (LEGACY MODE)', {
       pollIntervalMs: this.pollIntervalMs,
       maxConcurrent: this.maxConcurrent,
     });

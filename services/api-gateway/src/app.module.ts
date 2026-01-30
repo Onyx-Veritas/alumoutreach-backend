@@ -15,6 +15,8 @@ import { SequencesModule } from './modules/sequences/sequences.module';
 import { InboxModule } from './modules/inbox/inbox.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
+import { QueueModule } from './modules/queue/queue.module';
+import { ChannelsModule } from './modules/channels/channels.module';
 import { DevModule } from './dev/dev.module';
 
 // Logging
@@ -149,6 +151,9 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
     // Logging
     LoggerModule,
 
+    // Queue Infrastructure (load before feature modules - Global module)
+    QueueModule,
+
     // Dev Playground (load FIRST to avoid module ordering issues)
     DevModule,
 
@@ -159,6 +164,7 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
     TemplatesModule,
     CampaignsModule,
     PipelineModule,
+    ChannelsModule,
     WorkflowsModule,
     SequencesModule,
     InboxModule,

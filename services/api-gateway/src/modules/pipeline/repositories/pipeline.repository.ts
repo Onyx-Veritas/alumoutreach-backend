@@ -3,8 +3,73 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThanOrEqual, MoreThan } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { PipelineJob, PipelineFailure } from '../entities';
-import { PipelineJobStatus, PipelineChannel } from '../entities/pipeline.enums';
+import { PipelineJobStatus, PipelineChannel, PipelineSkipReason } from '../entities/pipeline.enums';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
+
+// ============ State Machine Configuration ============
+
+/**
+ * Defines valid state transitions for pipeline jobs.
+ * Key: current status, Value: array of allowed next statuses
+ */
+const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
+  [PipelineJobStatus.PENDING]: [
+    PipelineJobStatus.QUEUED,
+    PipelineJobStatus.SKIPPED, // Can skip from pending if validation fails
+    PipelineJobStatus.FAILED,  // Can fail from pending if critical error
+  ],
+  [PipelineJobStatus.QUEUED]: [
+    PipelineJobStatus.PROCESSING,
+    PipelineJobStatus.SKIPPED, // Can skip if pre-send validation fails
+    PipelineJobStatus.FAILED,
+  ],
+  [PipelineJobStatus.PROCESSING]: [
+    PipelineJobStatus.SENT,
+    PipelineJobStatus.FAILED,
+    PipelineJobStatus.SKIPPED, // Can skip during processing (e.g., invalid recipient discovered)
+  ],
+  [PipelineJobStatus.SENT]: [
+    PipelineJobStatus.DELIVERED,
+    PipelineJobStatus.FAILED, // Bounce, etc.
+  ],
+  [PipelineJobStatus.DELIVERED]: [], // Terminal state
+  [PipelineJobStatus.FAILED]: [
+    PipelineJobStatus.RETRYING,
+    PipelineJobStatus.DEAD, // After max retries
+  ],
+  [PipelineJobStatus.RETRYING]: [
+    PipelineJobStatus.QUEUED,     // Re-queued for retry
+    PipelineJobStatus.PROCESSING, // Being retried
+    PipelineJobStatus.SENT,       // Retry succeeded
+    PipelineJobStatus.FAILED,     // Retry failed
+    PipelineJobStatus.DEAD,       // Max retries exceeded
+  ],
+  [PipelineJobStatus.DEAD]: [], // Terminal state
+  [PipelineJobStatus.SKIPPED]: [], // Terminal state
+};
+
+/**
+ * Maps status transitions to their timestamp fields
+ */
+const STATUS_TIMESTAMP_MAP: Partial<Record<PipelineJobStatus, keyof PipelineJob>> = {
+  [PipelineJobStatus.QUEUED]: 'queuedAt',
+  [PipelineJobStatus.PROCESSING]: 'processingAt',
+  [PipelineJobStatus.SENT]: 'sentAt',
+  [PipelineJobStatus.DELIVERED]: 'deliveredAt',
+  [PipelineJobStatus.FAILED]: 'failedAt',
+  [PipelineJobStatus.SKIPPED]: 'skippedAt',
+};
+
+export class InvalidStateTransitionError extends Error {
+  constructor(
+    public readonly jobId: string,
+    public readonly fromStatus: PipelineJobStatus,
+    public readonly toStatus: PipelineJobStatus,
+  ) {
+    super(`Invalid state transition for job ${jobId}: ${fromStatus} -> ${toStatus}`);
+    this.name = 'InvalidStateTransitionError';
+  }
+}
 
 // ============ Pipeline Repository ============
 
@@ -229,7 +294,8 @@ export class PipelineRepository {
   }
 
   /**
-   * Update job status
+   * Update job status (basic - no state machine validation)
+   * @deprecated Use transitionJobState for state machine enforcement
    */
   async updateJobStatus(
     jobId: string,
@@ -238,8 +304,13 @@ export class PipelineRepository {
   ): Promise<PipelineJob | null> {
     const startTime = this.logger.logOperationStart('update job status', { jobId, status });
 
+    // Auto-set timestamp for the status
+    const timestampField = STATUS_TIMESTAMP_MAP[status];
+    const timestampUpdate = timestampField ? { [timestampField]: new Date() } : {};
+
     await this.jobRepository.update(jobId, {
       status,
+      ...timestampUpdate,
       ...updates,
     });
 
@@ -280,6 +351,112 @@ export class PipelineRepository {
     return this.updateJobStatus(jobId, PipelineJobStatus.FAILED, {
       errorMessage,
     });
+  }
+
+  /**
+   * Mark job as skipped (pre-send validation failure)
+   */
+  async markJobSkipped(
+    jobId: string,
+    skipReason: PipelineSkipReason,
+    errorMessage?: string,
+  ): Promise<PipelineJob | null> {
+    return this.updateJobStatus(jobId, PipelineJobStatus.SKIPPED, {
+      skipReason,
+      errorMessage,
+      skippedAt: new Date(),
+    });
+  }
+
+  /**
+   * Transition job to a new state with state machine validation.
+   * Throws InvalidStateTransitionError if the transition is not allowed.
+   */
+  async transitionJobState(
+    jobId: string,
+    toStatus: PipelineJobStatus,
+    updates?: Partial<PipelineJob>,
+  ): Promise<PipelineJob> {
+    const startTime = this.logger.logOperationStart('transition job state', { jobId, toStatus });
+
+    // Fetch current job state
+    const job = await this.jobRepository.findOne({ where: { id: jobId } });
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+
+    // Validate transition
+    const allowedTransitions = VALID_TRANSITIONS[job.status] || [];
+    if (!allowedTransitions.includes(toStatus)) {
+      this.logger.warn('[STATE MACHINE] Invalid state transition attempted', {
+        jobId,
+        fromStatus: job.status,
+        toStatus,
+        allowedTransitions,
+      });
+      throw new InvalidStateTransitionError(jobId, job.status, toStatus);
+    }
+
+    // Auto-set timestamp for the status
+    const timestampField = STATUS_TIMESTAMP_MAP[toStatus];
+    const timestampUpdate = timestampField ? { [timestampField]: new Date() } : {};
+
+    await this.jobRepository.update(jobId, {
+      status: toStatus,
+      ...timestampUpdate,
+      ...updates,
+    });
+
+    const updatedJob = await this.jobRepository.findOne({ where: { id: jobId } });
+
+    this.logger.logDbQuery('transition job state', 1, {
+      jobId,
+      fromStatus: job.status,
+      toStatus,
+    });
+    this.logger.logOperationEnd('transition job state', startTime, {
+      jobId,
+      fromStatus: job.status,
+      toStatus,
+    });
+
+    return updatedJob!;
+  }
+
+  /**
+   * Check if a state transition is valid
+   */
+  isValidTransition(fromStatus: PipelineJobStatus, toStatus: PipelineJobStatus): boolean {
+    const allowedTransitions = VALID_TRANSITIONS[fromStatus] || [];
+    return allowedTransitions.includes(toStatus);
+  }
+
+  /**
+   * Bulk update status for multiple jobs
+   */
+  async bulkUpdateStatus(
+    jobIds: string[],
+    status: PipelineJobStatus,
+  ): Promise<number> {
+    if (jobIds.length === 0) return 0;
+
+    const startTime = this.logger.logOperationStart('bulk update status', {
+      count: jobIds.length,
+      status,
+    });
+
+    const result = await this.jobRepository
+      .createQueryBuilder()
+      .update()
+      .set({ status, updatedAt: new Date() })
+      .whereInIds(jobIds)
+      .execute();
+
+    const affected = result.affected || 0;
+    this.logger.logDbQuery('bulk update status', affected);
+    this.logger.logOperationEnd('bulk update status', startTime, { affected });
+
+    return affected;
   }
 
   /**

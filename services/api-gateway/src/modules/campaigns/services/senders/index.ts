@@ -1,5 +1,5 @@
-// Re-export the common SendResult interface only from email.sender (others use the same)
-export { SendResult, EmailSenderService } from './email.sender';
-export { SmsSenderService } from './sms.sender';
-export { WhatsAppSenderService } from './whatsapp.sender';
-export { PushSenderService } from './push.sender';
+// Re-export the common interfaces and services
+export { SendResult, SendRequest, EmailSenderService } from './email.sender';
+export { SmsSendRequest, SmsSenderService } from './sms.sender';
+export { WhatsAppSendRequest, WhatsAppSenderService } from './whatsapp.sender';
+export { PushSendRequest, PushSenderService } from './push.sender';

@@ -1,10 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { v4 as uuidv4 } from 'uuid';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
 import { EventBusService } from '../../../common/services/event-bus.service';
 import { PipelineRepository } from '../repositories/pipeline.repository';
 import { PipelineJob, PipelineJobStatus, PipelineChannel } from '../entities';
 import { PipelineEventType, PipelineSubjects, PipelineJobCreatedEvent, PipelineBatchCreatedEvent } from '../events';
+import { QUEUE_NAMES, JOB_NAMES } from '../../queue/queue.constants';
+import { PipelineJobData, TenantQueueConfig, EnqueueResult } from '../../queue/interfaces';
+import { QueueConfigService } from '../../queue/services';
 
 // ============ Types for Campaign Integration ============
 
@@ -14,6 +19,7 @@ export interface CampaignRunInfo {
   tenantId: string;
   channel: string;
   templateVersionId?: string;
+  campaignName?: string;
 }
 
 export interface ContactInfo {
@@ -29,18 +35,30 @@ export interface ContactInfo {
 @Injectable()
 export class PipelineProducerService {
   private readonly logger: AppLoggerService;
+  private readonly useBullMQ: boolean;
 
   constructor(
     private readonly pipelineRepository: PipelineRepository,
     private readonly eventBus: EventBusService,
+    @Optional() @InjectQueue(QUEUE_NAMES.PIPELINE_JOBS)
+    private readonly pipelineQueue?: Queue<PipelineJobData>,
+    @Optional()
+    private readonly queueConfigService?: QueueConfigService,
   ) {
     this.logger = new AppLoggerService();
     this.logger.setContext('PipelineProducerService');
+    this.useBullMQ = !!this.pipelineQueue;
+
+    if (this.useBullMQ) {
+      this.logger.info('BullMQ queue available - using queue-based processing');
+    } else {
+      this.logger.warn('BullMQ queue not available - using polling-based processing');
+    }
   }
 
   /**
    * Enqueue jobs for a campaign run
-   * Called by CampaignDispatchService to create pipeline jobs
+   * Creates DB records and enqueues to BullMQ if available
    */
   async enqueueCampaignRun(
     campaignRun: CampaignRunInfo,
@@ -74,13 +92,24 @@ export class PipelineProducerService {
         contactId: contact.id,
         templateVersionId: campaignRun.templateVersionId,
         channel,
-        payload: this.buildPayload(contact, channel),
+        payload: this.buildPayload(contact, channel, campaignRun.campaignName),
         status: PipelineJobStatus.PENDING,
         retryCount: 0,
       }));
 
-      // Bulk create jobs
+      // Bulk create jobs in database
       const jobs = await this.pipelineRepository.createJobsBulk(jobsData);
+
+      // Enqueue to BullMQ if available
+      if (this.useBullMQ) {
+        const enqueueResult = await this.enqueueToBullMQ(jobs, campaignRun, correlationId);
+        this.logger.log('[BULLMQ] Jobs enqueued', {
+          campaignRunId: campaignRun.id,
+          totalJobs: jobs.length,
+          enqueuedJobs: enqueueResult.enqueuedJobs,
+          correlationId,
+        });
+      }
 
       // Publish batch created event
       await this.publishBatchCreatedEvent(campaignRun, jobs.length, channel, correlationId);
@@ -90,6 +119,7 @@ export class PipelineProducerService {
 
       this.logger.logOperationEnd('enqueue campaign run', startTime, {
         jobsCreated: jobs.length,
+        useBullMQ: this.useBullMQ,
       });
 
       return jobs;
@@ -99,6 +129,61 @@ export class PipelineProducerService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Enqueue jobs to BullMQ with per-tenant rate limiting
+   */
+  private async enqueueToBullMQ(
+    jobs: PipelineJob[],
+    campaignRun: CampaignRunInfo,
+    correlationId: string,
+  ): Promise<EnqueueResult> {
+    if (!this.pipelineQueue || !this.queueConfigService) {
+      return { totalJobs: jobs.length, enqueuedJobs: 0, skippedJobs: jobs.length };
+    }
+
+    // Get tenant-specific queue config
+    const tenantConfig = await this.queueConfigService.getTenantConfig(campaignRun.tenantId);
+
+    // Build BullMQ jobs with rate limiting delays
+    const bullJobs = jobs.map((job, index) => {
+      const delay = this.queueConfigService!.calculateJobDelay(index, tenantConfig);
+
+      const jobData: PipelineJobData = {
+        jobId: job.id,
+        tenantId: job.tenantId,
+        correlationId,
+        campaignId: job.campaignId,
+        campaignRunId: job.campaignRunId,
+        contactId: job.contactId,
+        channel: job.channel,
+        templateVersionId: job.templateVersionId || '',
+      };
+
+      return {
+        name: JOB_NAMES.SEND_MESSAGE,
+        data: jobData,
+        opts: {
+          ...this.queueConfigService!.getJobOptions(tenantConfig),
+          delay,
+          jobId: job.id, // Use DB ID for idempotency
+        },
+      };
+    });
+
+    // Bulk add to queue
+    await this.pipelineQueue.addBulk(bullJobs);
+
+    // Update job statuses to QUEUED
+    const jobIds = jobs.map(j => j.id);
+    await this.pipelineRepository.bulkUpdateStatus(jobIds, PipelineJobStatus.QUEUED);
+
+    return {
+      totalJobs: jobs.length,
+      enqueuedJobs: jobs.length,
+      skippedJobs: 0,
+    };
   }
 
   /**
@@ -152,19 +237,24 @@ export class PipelineProducerService {
   /**
    * Build job payload based on contact and channel
    */
-  private buildPayload(contact: ContactInfo, channel: PipelineChannel): Record<string, unknown> {
+  private buildPayload(
+    contact: ContactInfo,
+    channel: PipelineChannel,
+    campaignName?: string,
+  ): Record<string, unknown> {
     const base = {
       contactId: contact.id,
       fullName: contact.fullName,
       attributes: contact.attributes,
+      campaignName,
     };
 
     switch (channel) {
       case PipelineChannel.EMAIL:
-        return { ...base, to: contact.email };
+        return { ...base, to: contact.email, recipientEmail: contact.email };
       case PipelineChannel.SMS:
       case PipelineChannel.WHATSAPP:
-        return { ...base, to: contact.phone };
+        return { ...base, to: contact.phone, recipientPhone: contact.phone };
       case PipelineChannel.PUSH:
         return { ...base };
       default:

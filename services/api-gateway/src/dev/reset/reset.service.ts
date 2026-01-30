@@ -353,6 +353,49 @@ export class ResetService {
   }
 
   /**
+   * Reset templates for a tenant
+   */
+  async resetTemplates(tenantId: string): Promise<ResetResult> {
+    const startTime = Date.now();
+    const errors: string[] = [];
+
+    try {
+      // Delete template versions first, then templates
+      const versionsResult = await this.dataSource.query(
+        `DELETE FROM template_versions WHERE template_id IN (
+          SELECT id FROM templates WHERE tenant_id = $1
+        )`,
+        [tenantId]
+      );
+
+      const templatesResult = await this.dataSource.query(
+        `DELETE FROM templates WHERE tenant_id = $1`,
+        [tenantId]
+      );
+
+      const deletedCount = (versionsResult?.[1] || 0) + (templatesResult?.[1] || 0);
+
+      this.logger.debug(`Deleted ${deletedCount} template-related records`);
+
+      return {
+        success: true,
+        module: 'templates',
+        deletedCount,
+        duration: Date.now() - startTime,
+      };
+    } catch (error) {
+      errors.push(error.message);
+      return {
+        success: false,
+        module: 'templates',
+        deletedCount: 0,
+        duration: Date.now() - startTime,
+        errors,
+      };
+    }
+  }
+
+  /**
    * Get counts for all entities (for dashboard)
    */
   async getCounts(tenantId: string): Promise<Record<string, number>> {

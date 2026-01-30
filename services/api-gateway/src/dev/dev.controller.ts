@@ -5,15 +5,17 @@ import {
   Delete,
   Body,
   Query,
+  Param,
   UseGuards,
   HttpCode,
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiHeader, ApiBody, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiHeader, ApiBody, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { IsOptional, IsNumber, IsBoolean, IsString, IsArray, IsObject, ValidateNested, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DevService } from './dev.service';
+import { DemoSeedService, DemoPreset, SeedResult } from './services/demo-seed.service';
 import { DevOnlyGuard } from './guards/dev-only.guard';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { CorrelationId } from '../common/decorators/correlation-id.decorator';
@@ -100,6 +102,49 @@ class GenerateCampaignsDto {
   statuses?: ('draft' | 'scheduled')[];
 }
 
+class GenerateTemplatesDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(30)
+  count?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  channels?: ('email' | 'sms' | 'whatsapp' | 'push')[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  categories?: ('transactional' | 'marketing' | 'lifecycle' | 'compliance' | 'notification' | 'reminder')[];
+}
+
+class GenerateSequencesDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(20)
+  count?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  types?: ('drip' | 'onboarding' | 'behavioral')[];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(2)
+  @Max(15)
+  minSteps?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(3)
+  @Max(20)
+  maxSteps?: number;
+}
+
 class RunScenarioDto {
   @IsOptional()
   @IsNumber()
@@ -127,6 +172,61 @@ class RunWorkflowScenarioDto extends RunScenarioDto {
   triggerType?: 'contact_created' | 'tag_added' | 'segment_joined';
 }
 
+class ExecuteCampaignDto {
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
+}
+
+class RunCampaignExecutionScenarioDto extends RunScenarioDto {
+  @IsOptional()
+  @IsString()
+  channel?: 'email' | 'sms' | 'whatsapp' | 'push';
+  
+  @IsOptional()
+  @IsBoolean()
+  executeImmediately?: boolean;
+}
+
+class RunSequenceEnrollmentScenarioDto extends RunScenarioDto {
+  @IsOptional()
+  @IsString()
+  sequenceType?: 'drip' | 'onboarding' | 'behavioral';
+  
+  @IsOptional()
+  @IsBoolean()
+  enrollAll?: boolean;
+}
+
+class RunPartialFailureScenarioDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(20)
+  validCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(20)
+  invalidEmailCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(20)
+  missingEmailCount?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  waitForCompletion?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(5000)
+  @Max(120000)
+  waitTimeoutMs?: number;
+}
 // ==================== CONTROLLER ====================
 
 @Controller('dev')
@@ -136,7 +236,10 @@ class RunWorkflowScenarioDto extends RunScenarioDto {
 export class DevController {
   private readonly logger = new Logger(DevController.name);
 
-  constructor(private readonly devService: DevService) {
+  constructor(
+    private readonly devService: DevService,
+    private readonly demoSeedService: DemoSeedService,
+  ) {
     console.log('=== DEV CONTROLLER CONSTRUCTOR CALLED ===');
     this.logger.log('DevController instantiated');
   }
@@ -218,6 +321,46 @@ export class DevController {
     return { success: result.success, data: result };
   }
 
+  @Post('templates/generate')
+  @ApiOperation({
+    summary: 'Generate templates',
+    description: 'Generate and create message templates',
+  })
+  @ApiBody({ type: GenerateTemplatesDto })
+  @ApiResponse({ status: 201, description: 'Templates generated' })
+  async generateTemplates(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Body() dto: GenerateTemplatesDto,
+  ) {
+    const result = await this.devService.generateTemplates(
+      tenantId,
+      dto,
+      correlationId,
+    );
+    return { success: result.success, data: result };
+  }
+
+  @Post('sequences/generate')
+  @ApiOperation({
+    summary: 'Generate sequences',
+    description: 'Generate and create sequences with steps',
+  })
+  @ApiBody({ type: GenerateSequencesDto })
+  @ApiResponse({ status: 201, description: 'Sequences generated' })
+  async generateSequences(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Body() dto: GenerateSequencesDto,
+  ) {
+    const result = await this.devService.generateSequences(
+      tenantId,
+      dto,
+      correlationId,
+    );
+    return { success: result.success, data: result };
+  }
+
   // ==================== SCENARIOS ====================
 
   @Post('scenarios/campaign-basic')
@@ -275,6 +418,71 @@ export class DevController {
     const result = await this.devService.runWorkflowTriggerScenario(tenantId, {
       contactCount: dto.contactCount,
       triggerType: dto.triggerType,
+      correlationId,
+    });
+    return { success: result.success, data: result };
+  }
+
+  @Post('scenarios/campaign-execution')
+  @ApiOperation({
+    summary: 'Run campaign-execution scenario (BullMQ)',
+    description: 'Creates contacts, segment, campaign and executes it via BullMQ pipeline',
+  })
+  @ApiBody({ type: RunCampaignExecutionScenarioDto })
+  @ApiResponse({ status: 200, description: 'Scenario completed' })
+  async runCampaignExecutionScenario(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Body() dto: RunCampaignExecutionScenarioDto,
+  ) {
+    const result = await this.devService.runCampaignExecutionScenario(tenantId, {
+      contactCount: dto.contactCount,
+      channel: dto.channel,
+      executeImmediately: dto.executeImmediately ?? true,
+      correlationId,
+    });
+    return { success: result.success, data: result };
+  }
+
+  @Post('scenarios/sequence-enrollment')
+  @ApiOperation({
+    summary: 'Run sequence-enrollment scenario',
+    description: 'Creates contacts, sequence, and enrolls contacts into it',
+  })
+  @ApiBody({ type: RunSequenceEnrollmentScenarioDto })
+  @ApiResponse({ status: 200, description: 'Scenario completed' })
+  async runSequenceEnrollmentScenario(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Body() dto: RunSequenceEnrollmentScenarioDto,
+  ) {
+    const result = await this.devService.runSequenceEnrollmentScenario(tenantId, {
+      contactCount: dto.contactCount,
+      sequenceType: dto.sequenceType,
+      enrollAll: dto.enrollAll ?? true,
+      correlationId,
+    });
+    return { success: result.success, data: result };
+  }
+
+  @Post('scenarios/partial-failure')
+  @ApiOperation({
+    summary: 'Run partial-failure scenario',
+    description: 'Creates campaign with mix of valid/invalid/missing emails to test failure handling',
+  })
+  @ApiBody({ type: RunPartialFailureScenarioDto })
+  @ApiResponse({ status: 200, description: 'Scenario completed with stats' })
+  async runPartialFailureScenario(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Body() dto: RunPartialFailureScenarioDto,
+  ) {
+    const result = await this.devService.runPartialFailureScenario(tenantId, {
+      validCount: dto.validCount ?? 3,
+      invalidEmailCount: dto.invalidEmailCount ?? 2,
+      missingEmailCount: dto.missingEmailCount ?? 1,
+      waitForCompletion: dto.waitForCompletion ?? true,
+      waitTimeoutMs: dto.waitTimeoutMs ?? 30000,
       correlationId,
     });
     return { success: result.success, data: result };
@@ -366,6 +574,18 @@ export class DevController {
     return { success: result.success, data: result };
   }
 
+  @Post('reset/templates')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reset templates',
+    description: 'Deletes all templates for the tenant',
+  })
+  @ApiResponse({ status: 200, description: 'Templates reset complete' })
+  async resetTemplates(@TenantId() tenantId: string) {
+    const result = await this.devService.resetTemplates(tenantId);
+    return { success: result.success, data: result };
+  }
+
   // ==================== EXPLORER (List & Browse) ====================
 
   @Get('explorer/contacts')
@@ -411,6 +631,182 @@ export class DevController {
   ) {
     const data = await this.devService.listCampaigns(tenantId, limit || 50);
     return { success: true, data };
+  }
+
+  @Get('explorer/templates')
+  @ApiOperation({
+    summary: 'List all templates',
+    description: 'Get a list of all templates for the tenant (for explorer)',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max items to return' })
+  @ApiResponse({ status: 200, description: 'List of templates' })
+  async listTemplates(
+    @TenantId() tenantId: string,
+    @Query('limit') limit?: number,
+  ) {
+    const data = await this.devService.listTemplates(tenantId, limit || 50);
+    return { success: true, data };
+  }
+
+  @Get('explorer/workflows')
+  @ApiOperation({
+    summary: 'List all workflows',
+    description: 'Get a list of all workflows for the tenant (for explorer)',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max items to return' })
+  @ApiResponse({ status: 200, description: 'List of workflows' })
+  async listWorkflows(
+    @TenantId() tenantId: string,
+    @Query('limit') limit?: number,
+  ) {
+    const data = await this.devService.listWorkflows(tenantId, limit || 50);
+    return { success: true, data };
+  }
+
+  @Get('explorer/sequences')
+  @ApiOperation({
+    summary: 'List all sequences',
+    description: 'Get a list of all sequences for the tenant (for explorer)',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max items to return' })
+  @ApiResponse({ status: 200, description: 'List of sequences' })
+  async listSequences(
+    @TenantId() tenantId: string,
+    @Query('limit') limit?: number,
+  ) {
+    const data = await this.devService.listSequences(tenantId, limit || 50);
+    return { success: true, data };
+  }
+
+  @Get('explorer/inbox-threads')
+  @ApiOperation({
+    summary: 'List all inbox threads',
+    description: 'Get a list of all inbox threads for the tenant (for explorer)',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max items to return' })
+  @ApiResponse({ status: 200, description: 'List of inbox threads' })
+  async listInboxThreads(
+    @TenantId() tenantId: string,
+    @Query('limit') limit?: number,
+  ) {
+    const data = await this.devService.listInboxThreads(tenantId, limit || 50);
+    return { success: true, data };
+  }
+
+  // ==================== LOGS ====================
+
+  @Get('logs')
+  @ApiOperation({
+    summary: 'Get dev playground logs',
+    description: 'Returns recent activity logs from the dev playground',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max logs to return' })
+  @ApiQuery({ name: 'level', required: false, enum: ['debug', 'info', 'warn', 'error'], description: 'Filter by log level' })
+  @ApiQuery({ name: 'module', required: false, type: String, description: 'Filter by module name' })
+  @ApiQuery({ name: 'since', required: false, type: String, description: 'ISO timestamp to get logs after' })
+  @ApiResponse({ status: 200, description: 'Logs list' })
+  async getLogs(
+    @Query('limit') limit?: number,
+    @Query('level') level?: string,
+    @Query('module') module?: string,
+    @Query('since') since?: string,
+  ) {
+    const data = await this.devService.getLogs({
+      limit: limit ? parseInt(String(limit), 10) : undefined,
+      level: level as any,
+      module,
+      since,
+    });
+    return { success: true, data };
+  }
+
+  @Get('logs/poll')
+  @ApiOperation({
+    summary: 'Poll for new logs',
+    description: 'Get logs newer than a specific log ID (for polling)',
+  })
+  @ApiQuery({ name: 'afterId', required: true, type: String, description: 'Get logs after this log ID' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, description: 'New logs' })
+  async pollLogs(
+    @Query('afterId') afterId: string,
+    @Query('limit') limit?: number,
+  ) {
+    const data = await this.devService.getNewLogs(afterId, limit ? parseInt(String(limit), 10) : undefined);
+    return { success: true, data };
+  }
+
+  @Get('logs/stats')
+  @ApiOperation({
+    summary: 'Get log stats',
+    description: 'Returns stats about stored logs',
+  })
+  @ApiResponse({ status: 200, description: 'Log stats' })
+  async getLogStats() {
+    const data = await this.devService.getLogStats();
+    return { success: true, data };
+  }
+
+  @Post('logs/clear')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Clear all logs',
+    description: 'Clears all stored dev playground logs',
+  })
+  @ApiResponse({ status: 200, description: 'Logs cleared' })
+  async clearLogs() {
+    await this.devService.clearLogs();
+    return { success: true, message: 'Logs cleared' };
+  }
+
+  // ==================== DEMO SEEDING ====================
+
+  @Get('seed/presets')
+  @ApiOperation({
+    summary: 'Get available demo presets',
+    description: 'Returns list of predefined demo data configurations',
+  })
+  @ApiResponse({ status: 200, description: 'List of presets' })
+  async getPresets(): Promise<{ success: boolean; data: DemoPreset[] }> {
+    const presets = this.demoSeedService.getPresets();
+    return { success: true, data: presets };
+  }
+
+  @Get('seed/presets/:presetId')
+  @ApiOperation({
+    summary: 'Get a specific preset',
+    description: 'Returns details of a specific preset',
+  })
+  @ApiParam({ name: 'presetId', description: 'Preset ID' })
+  @ApiResponse({ status: 200, description: 'Preset details' })
+  async getPreset(
+    @Param('presetId') presetId: string,
+  ): Promise<{ success: boolean; data: DemoPreset | null }> {
+    const preset = this.demoSeedService.getPreset(presetId);
+    return { success: true, data: preset || null };
+  }
+
+  @Post('seed/:presetId')
+  @ApiOperation({
+    summary: 'Seed data with preset',
+    description: 'Populate the system with demo data using a preset configuration',
+  })
+  @ApiParam({ name: 'presetId', description: 'Preset ID (minimal, small-team, full-demo, campaign-focus, automation-focus)' })
+  @ApiQuery({ name: 'resetFirst', required: false, type: Boolean, description: 'Reset all data before seeding' })
+  @ApiResponse({ status: 200, description: 'Seed result' })
+  async seedWithPreset(
+    @TenantId() tenantId: string,
+    @CorrelationId() correlationId: string,
+    @Param('presetId') presetId: string,
+    @Query('resetFirst') resetFirst?: string,
+  ): Promise<{ success: boolean; data: SeedResult }> {
+    const result = await this.demoSeedService.seedWithPreset(
+      tenantId,
+      presetId,
+      correlationId,
+      resetFirst === 'true',
+    );
+    return { success: result.success, data: result };
   }
 }
 

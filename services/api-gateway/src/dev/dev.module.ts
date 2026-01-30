@@ -10,14 +10,25 @@ import { DevOnlyGuard } from './guards/dev-only.guard';
 import { ContactGenerator } from './generators/contact.generator';
 import { SegmentGenerator } from './generators/segment.generator';
 import { CampaignGenerator } from './generators/campaign.generator';
+import { TemplateGenerator } from './generators/template.generator';
+import { SequenceGenerator } from './generators/sequence.generator';
 
 // Scenarios
 import { CampaignBasicScenario } from './scenarios/campaign-basic.scenario';
 import { InboxFlowScenario } from './scenarios/inbox-flow.scenario';
 import { WorkflowTriggerScenario } from './scenarios/workflow-trigger.scenario';
+import { CampaignExecutionScenario } from './scenarios/campaign-execution.scenario';
+import { SequenceEnrollmentScenario } from './scenarios/sequence-enrollment.scenario';
+import { PartialFailureScenario } from './scenarios/partial-failure.scenario';
 
 // Reset
 import { ResetService } from './reset/reset.service';
+
+// Queue Monitor
+import { QueueMonitorService } from './services/queue-monitor.service';
+import { DevLogsService } from './services/dev-logs.service';
+import { DemoSeedService } from './services/demo-seed.service';
+import { QueueController } from './controllers/queue.controller';
 
 // Main service & controller
 import { DevService } from './dev.service';
@@ -29,6 +40,10 @@ import { SegmentsModule } from '../modules/segments/segments.module';
 import { CampaignsModule } from '../modules/campaigns/campaigns.module';
 import { InboxModule } from '../modules/inbox/inbox.module';
 import { WorkflowsModule } from '../modules/workflows/workflows.module';
+import { TemplatesModule } from '../modules/templates/templates.module';
+import { SequencesModule } from '../modules/sequences/sequences.module';
+import { QueueModule } from '../modules/queue/queue.module';
+import { PipelineModule } from '../modules/pipeline/pipeline.module';
 
 /**
  * DevModule - Development Playground for testing and debugging
@@ -51,8 +66,12 @@ import { WorkflowsModule } from '../modules/workflows/workflows.module';
     CampaignsModule,
     InboxModule,
     WorkflowsModule,
+    TemplatesModule,
+    SequencesModule,
+    QueueModule,
+    PipelineModule,
   ],
-  controllers: [DevController],
+  controllers: [DevController, QueueController],
   providers: [
     // Guard
     DevOnlyGuard,
@@ -61,14 +80,28 @@ import { WorkflowsModule } from '../modules/workflows/workflows.module';
     ContactGenerator,
     SegmentGenerator,
     CampaignGenerator,
+    TemplateGenerator,
+    SequenceGenerator,
     
     // Scenarios
     CampaignBasicScenario,
     InboxFlowScenario,
     WorkflowTriggerScenario,
+    CampaignExecutionScenario,
+    SequenceEnrollmentScenario,
+    PartialFailureScenario,
     
     // Reset
     ResetService,
+    
+    // Queue Monitor
+    QueueMonitorService,
+    
+    // Logs
+    DevLogsService,
+    
+    // Demo Seed
+    DemoSeedService,
     
     // Main service
     DevService,

@@ -24,6 +24,7 @@ END $$;
 -- ============ PIPELINE JOB STATUS ENUM ============
 DO $$ BEGIN
     CREATE TYPE pipeline_job_status AS ENUM (
+        'queued',
         'pending',
         'processing',
         'sent',

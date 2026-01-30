@@ -1,4 +1,4 @@
-import { PipelineJobStatus, PipelineChannel } from '../entities/pipeline.enums';
+import { PipelineJobStatus, PipelineChannel, PipelineSkipReason } from '../entities/pipeline.enums';
 
 // ============ Pipeline Event Types ============
 
@@ -11,10 +11,14 @@ export enum PipelineEventType {
   JOB_FAILED = 'pipeline.job.failed',
   JOB_RETRYING = 'pipeline.job.retrying',
   JOB_DEAD = 'pipeline.job.dead',
+  JOB_SKIPPED = 'pipeline.job.skipped',
 
   // Batch events
   BATCH_CREATED = 'pipeline.batch.created',
   BATCH_COMPLETED = 'pipeline.batch.completed',
+  
+  // Campaign events
+  CAMPAIGN_RUN_COMPLETED = 'pipeline.campaign_run.completed',
 }
 
 // ============ NATS Subjects ============
@@ -27,8 +31,10 @@ export const PipelineSubjects = {
   JOB_FAILED: 'alumoutreach.pipeline.job.failed',
   JOB_RETRYING: 'alumoutreach.pipeline.job.retrying',
   JOB_DEAD: 'alumoutreach.pipeline.job.dead',
+  JOB_SKIPPED: 'alumoutreach.pipeline.job.skipped',
   BATCH_CREATED: 'alumoutreach.pipeline.batch.created',
   BATCH_COMPLETED: 'alumoutreach.pipeline.batch.completed',
+  CAMPAIGN_RUN_COMPLETED: 'alumoutreach.pipeline.campaign_run.completed',
 } as const;
 
 // ============ Base Event Interface ============
@@ -127,6 +133,18 @@ export interface PipelineJobDeadEvent extends BasePipelineEvent {
   };
 }
 
+export interface PipelineJobSkippedEvent extends BasePipelineEvent {
+  eventType: PipelineEventType.JOB_SKIPPED;
+  payload: {
+    jobId: string;
+    campaignId: string;
+    contactId: string;
+    channel: PipelineChannel;
+    skipReason: PipelineSkipReason;
+    message: string;
+  };
+}
+
 // ============ Batch Events ============
 
 export interface PipelineBatchCreatedEvent extends BasePipelineEvent {
@@ -151,6 +169,24 @@ export interface PipelineBatchCompletedEvent extends BasePipelineEvent {
   };
 }
 
+// ============ Campaign Events ============
+
+export interface CampaignRunCompletedEvent extends BasePipelineEvent {
+  eventType: PipelineEventType.CAMPAIGN_RUN_COMPLETED;
+  payload: {
+    campaignId: string;
+    campaignRunId: string;
+    tenantId: string;
+    totalRecipients: number;
+    sentCount: number;
+    failedCount: number;
+    skippedCount: number;
+    deadCount: number;
+    durationMs: number;
+    completedAt: string;
+  };
+}
+
 // ============ Union Type ============
 
 export type PipelineEvent =
@@ -161,5 +197,7 @@ export type PipelineEvent =
   | PipelineJobFailedEvent
   | PipelineJobRetryingEvent
   | PipelineJobDeadEvent
+  | PipelineJobSkippedEvent
   | PipelineBatchCreatedEvent
-  | PipelineBatchCompletedEvent;
+  | PipelineBatchCompletedEvent
+  | CampaignRunCompletedEvent;
