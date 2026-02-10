@@ -1,5 +1,5 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { v4 as uuidv4 } from 'uuid';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
 import { EventBusService } from '../../../common/services/event-bus.service';
@@ -104,8 +104,8 @@ export class MessageProcessor extends WorkerHost implements IJobExecutor {
         throw new PipelineJobNotFoundError(jobId);
       }
 
-      // 2. Mark as processing
-      await this.pipelineRepository.updateJobStatus(jobId, PipelineJobStatus.PROCESSING);
+      // 2. Mark as processing (state machine enforced: QUEUED → PROCESSING)
+      await this.pipelineRepository.transitionJobState(jobId, PipelineJobStatus.PROCESSING);
 
       // 3. Fetch contact
       const contact = await this.contactRepository.findById(tenantId, contactId);
@@ -333,22 +333,26 @@ export class MessageProcessor extends WorkerHost implements IJobExecutor {
     });
 
     // Determine if error is retryable
-    const isRetryable = error instanceof SendFailedError && (error as SendFailedError).retryable;
-    const isNonRetryable = 
+    const isNonRetryable =
       error instanceof InvalidRecipientError ||
       error instanceof TemplateNotFoundError ||
       error instanceof ContactNotFoundError ||
       error instanceof PipelineJobNotFoundError;
 
     if (isNonRetryable) {
-      // Mark as failed immediately
-      await this.pipelineRepository.markJobFailed(jobId, error.message);
-      
-      // Update campaign stats for permanent failure
-      await this.campaignStatsService.incrementFailed(campaignRunId, tenantId, correlationId);
+      // Mark as FAILED in DB first (PROCESSING → FAILED is valid).
+      // Skip for PipelineJobNotFoundError since the job doesn't exist in DB.
+      if (!(error instanceof PipelineJobNotFoundError)) {
+        await this.pipelineRepository.markJobFailed(jobId, error.message);
+      }
+
+      // Wrap in UnrecoverableError so BullMQ skips retries and goes directly
+      // to onFailed. Stats are updated in onFailed only (single code path)
+      // to prevent double-counting.
+      throw new UnrecoverableError(error.message);
     }
 
-    // Re-throw to let BullMQ handle retry logic
+    // Retryable errors: re-throw to let BullMQ handle retry logic
     throw error;
   }
 
@@ -412,7 +416,9 @@ export class MessageProcessor extends WorkerHost implements IJobExecutor {
   async onFailed(job: Job<PipelineJobData>, error: Error): Promise<void> {
     const { jobId, tenantId, correlationId, campaignId, campaignRunId, contactId, channel } = job.data;
     const maxAttempts = job.opts.attempts || 3;
-    const isLastAttempt = job.attemptsMade >= maxAttempts;
+    // UnrecoverableError means BullMQ skipped retries — treat as final failure
+    const isUnrecoverable = error instanceof UnrecoverableError || error.name === 'UnrecoverableError';
+    const isLastAttempt = isUnrecoverable || job.attemptsMade >= maxAttempts;
 
     this.logger.error('[WORKER] Job failed', undefined, {
       jobId,
@@ -424,12 +430,10 @@ export class MessageProcessor extends WorkerHost implements IJobExecutor {
     });
 
     if (isLastAttempt) {
-      // Mark as dead (no more retries)
-      await this.pipelineRepository.updateJobStatus(jobId, PipelineJobStatus.DEAD, {
-        errorMessage: error.message,
-      });
-      
-      // Update campaign stats for dead job (permanent failure)
+      // Mark as dead (state machine enforced: FAILED/PROCESSING → DEAD via markJobDead)
+      await this.pipelineRepository.markJobDead(jobId, error.message);
+
+      // Update campaign stats for dead job (single code path for all terminal failures)
       await this.campaignStatsService.incrementFailed(campaignRunId, tenantId, correlationId);
 
       // Publish dead event
@@ -453,8 +457,8 @@ export class MessageProcessor extends WorkerHost implements IJobExecutor {
 
       await this.publishEvent(PipelineSubjects.JOB_DEAD, event, correlationId);
     } else {
-      // Mark as retrying
-      await this.pipelineRepository.updateJobStatus(jobId, PipelineJobStatus.RETRYING, {
+      // Mark as retrying (state machine enforced: PROCESSING/FAILED → RETRYING)
+      await this.pipelineRepository.transitionJobState(jobId, PipelineJobStatus.RETRYING, {
         retryCount: job.attemptsMade,
       });
 

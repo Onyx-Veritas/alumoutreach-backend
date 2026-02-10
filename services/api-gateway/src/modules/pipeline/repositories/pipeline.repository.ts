@@ -12,7 +12,7 @@ import { AppLoggerService } from '../../../common/logger/app-logger.service';
  * Defines valid state transitions for pipeline jobs.
  * Key: current status, Value: array of allowed next statuses
  */
-const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
+export const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
   [PipelineJobStatus.PENDING]: [
     PipelineJobStatus.QUEUED,
     PipelineJobStatus.SKIPPED, // Can skip from pending if validation fails
@@ -27,6 +27,7 @@ const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
     PipelineJobStatus.SENT,
     PipelineJobStatus.FAILED,
     PipelineJobStatus.SKIPPED, // Can skip during processing (e.g., invalid recipient discovered)
+    PipelineJobStatus.DEAD,    // Max retries exhausted during processing
   ],
   [PipelineJobStatus.SENT]: [
     PipelineJobStatus.DELIVERED,
@@ -36,6 +37,7 @@ const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
   [PipelineJobStatus.FAILED]: [
     PipelineJobStatus.RETRYING,
     PipelineJobStatus.DEAD, // After max retries
+    PipelineJobStatus.PENDING, // Manual retry reset
   ],
   [PipelineJobStatus.RETRYING]: [
     PipelineJobStatus.QUEUED,     // Re-queued for retry
@@ -44,14 +46,16 @@ const VALID_TRANSITIONS: Record<PipelineJobStatus, PipelineJobStatus[]> = {
     PipelineJobStatus.FAILED,     // Retry failed
     PipelineJobStatus.DEAD,       // Max retries exceeded
   ],
-  [PipelineJobStatus.DEAD]: [], // Terminal state
+  [PipelineJobStatus.DEAD]: [
+    PipelineJobStatus.PENDING, // Manual retry reset
+  ],
   [PipelineJobStatus.SKIPPED]: [], // Terminal state
 };
 
 /**
  * Maps status transitions to their timestamp fields
  */
-const STATUS_TIMESTAMP_MAP: Partial<Record<PipelineJobStatus, keyof PipelineJob>> = {
+export const STATUS_TIMESTAMP_MAP: Partial<Record<PipelineJobStatus, keyof PipelineJob>> = {
   [PipelineJobStatus.QUEUED]: 'queuedAt',
   [PipelineJobStatus.PROCESSING]: 'processingAt',
   [PipelineJobStatus.SENT]: 'sentAt',
@@ -154,6 +158,23 @@ export class PipelineRepository {
 
     this.logger.logDbQuery('select job', job ? 1 : 0);
     this.logger.logOperationEnd('find job by id', startTime, { found: !!job });
+
+    return job;
+  }
+
+  /**
+   * Find job by provider message ID (e.g., SendGrid message ID)
+   * Used by webhook processors to correlate delivery events back to pipeline jobs
+   */
+  async findByProviderMessageId(providerMessageId: string): Promise<PipelineJob | null> {
+    const startTime = this.logger.logOperationStart('find job by provider message id', { providerMessageId });
+
+    const job = await this.jobRepository.findOne({
+      where: { providerMessageId },
+    });
+
+    this.logger.logDbQuery('select job by provider message id', job ? 1 : 0);
+    this.logger.logOperationEnd('find job by provider message id', startTime, { found: !!job });
 
     return job;
   }
@@ -295,7 +316,10 @@ export class PipelineRepository {
 
   /**
    * Update job status (basic - no state machine validation)
-   * @deprecated Use transitionJobState for state machine enforcement
+   * WARNING: Only use for MessageProcessor's onFailed handler and manual retry resets
+   * where the caller manages transition validity. All other callers should use the
+   * typed convenience methods (markJobSent, markJobFailed, etc.) which enforce the
+   * state machine via transitionJobState().
    */
   async updateJobStatus(
     jobId: string,
@@ -323,48 +347,44 @@ export class PipelineRepository {
   }
 
   /**
-   * Mark job as sent
+   * Mark job as sent (state machine enforced)
    */
   async markJobSent(
     jobId: string,
     providerMessageId?: string,
-  ): Promise<PipelineJob | null> {
-    return this.updateJobStatus(jobId, PipelineJobStatus.SENT, {
+  ): Promise<PipelineJob> {
+    return this.transitionJobState(jobId, PipelineJobStatus.SENT, {
       providerMessageId,
-      sentAt: new Date(),
     });
   }
 
   /**
-   * Mark job as delivered
+   * Mark job as delivered (state machine enforced)
    */
-  async markJobDelivered(jobId: string): Promise<PipelineJob | null> {
-    return this.updateJobStatus(jobId, PipelineJobStatus.DELIVERED, {
-      deliveredAt: new Date(),
-    });
+  async markJobDelivered(jobId: string): Promise<PipelineJob> {
+    return this.transitionJobState(jobId, PipelineJobStatus.DELIVERED);
   }
 
   /**
-   * Mark job as failed
+   * Mark job as failed (state machine enforced)
    */
-  async markJobFailed(jobId: string, errorMessage: string): Promise<PipelineJob | null> {
-    return this.updateJobStatus(jobId, PipelineJobStatus.FAILED, {
+  async markJobFailed(jobId: string, errorMessage: string): Promise<PipelineJob> {
+    return this.transitionJobState(jobId, PipelineJobStatus.FAILED, {
       errorMessage,
     });
   }
 
   /**
-   * Mark job as skipped (pre-send validation failure)
+   * Mark job as skipped (state machine enforced)
    */
   async markJobSkipped(
     jobId: string,
     skipReason: PipelineSkipReason,
     errorMessage?: string,
-  ): Promise<PipelineJob | null> {
-    return this.updateJobStatus(jobId, PipelineJobStatus.SKIPPED, {
+  ): Promise<PipelineJob> {
+    return this.transitionJobState(jobId, PipelineJobStatus.SKIPPED, {
       skipReason,
       errorMessage,
-      skippedAt: new Date(),
     });
   }
 
@@ -485,43 +505,39 @@ export class PipelineRepository {
   }
 
   /**
-   * Schedule job for retry
+   * Schedule job for retry (state machine enforced)
    */
   async scheduleRetry(
     jobId: string,
     nextAttemptAt: Date,
     incrementRetry: boolean = true,
-  ): Promise<PipelineJob | null> {
+  ): Promise<PipelineJob> {
     const startTime = this.logger.logOperationStart('schedule retry', { jobId, nextAttemptAt });
 
+    // Need current retryCount before transitioning
     const job = await this.jobRepository.findOne({ where: { id: jobId } });
     if (!job) {
-      this.logger.logOperationEnd('schedule retry', startTime, { found: false });
-      return null;
+      throw new Error(`Job not found: ${jobId}`);
     }
 
-    const updates: Partial<PipelineJob> = {
-      status: PipelineJobStatus.RETRYING,
-      nextAttemptAt,
-    };
-
+    const updates: Partial<PipelineJob> = { nextAttemptAt };
     if (incrementRetry) {
       updates.retryCount = job.retryCount + 1;
     }
 
-    await this.jobRepository.update(jobId, updates);
+    const result = await this.transitionJobState(jobId, PipelineJobStatus.RETRYING, updates);
 
     this.logger.logDbQuery('schedule retry', 1, { jobId, retryCount: updates.retryCount });
     this.logger.logOperationEnd('schedule retry', startTime, { jobId });
 
-    return this.jobRepository.findOne({ where: { id: jobId } });
+    return result;
   }
 
   /**
-   * Mark job as dead (after max retries)
+   * Mark job as dead after max retries (state machine enforced)
    */
-  async markJobDead(jobId: string, errorMessage: string): Promise<PipelineJob | null> {
-    return this.updateJobStatus(jobId, PipelineJobStatus.DEAD, { errorMessage });
+  async markJobDead(jobId: string, errorMessage: string): Promise<PipelineJob> {
+    return this.transitionJobState(jobId, PipelineJobStatus.DEAD, { errorMessage });
   }
 
   /**

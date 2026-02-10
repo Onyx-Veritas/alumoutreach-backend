@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
 import { EventBusService } from '../../../common/services/event-bus.service';
 import { CampaignRun, CampaignRunStatus } from '../../campaigns/entities/campaign-run.entity';
+import { Campaign, CampaignStatus } from '../../campaigns/entities/campaign.entity';
 import { PipelineJob } from '../entities/pipeline-job.entity';
 import { PipelineJobStatus } from '../entities/pipeline.enums';
 import {
@@ -27,6 +28,8 @@ export class CampaignStatsService {
   constructor(
     @InjectRepository(CampaignRun)
     private readonly runRepository: Repository<CampaignRun>,
+    @InjectRepository(Campaign)
+    private readonly campaignRepository: Repository<Campaign>,
     @InjectRepository(PipelineJob)
     private readonly jobRepository: Repository<PipelineJob>,
     private readonly eventBus: EventBusService,
@@ -95,10 +98,9 @@ export class CampaignStatsService {
           processedCount: () => 'processed_count + 1',
         });
       } else if (type === 'skipped') {
-        // Increment processedCount and track skipped in metadata
         updateQuery.set({
+          skippedCount: () => 'skipped_count + 1',
           processedCount: () => 'processed_count + 1',
-          metadata: () => `COALESCE(metadata, '{}')::jsonb || jsonb_build_object('skippedCount', COALESCE((metadata->>'skippedCount')::int, 0) + 1)`,
         });
       }
 
@@ -164,8 +166,18 @@ export class CampaignStatsService {
           completedAt,
         });
 
-        // Get skipped count from metadata
-        const skippedCount = (run.metadata as { skippedCount?: number })?.skippedCount || 0;
+        // Auto-update parent Campaign entity status
+        const campaignStatus = finalStatus === CampaignRunStatus.COMPLETED
+          ? CampaignStatus.COMPLETED
+          : CampaignStatus.FAILED;
+
+        await this.campaignRepository.update(
+          { id: run.campaignId, tenantId: run.tenantId },
+          { status: campaignStatus },
+        );
+
+        // Get skipped count from dedicated column
+        const skippedCount = run.skippedCount || 0;
 
         this.logger.info('Campaign run auto-completed', {
           campaignRunId,
@@ -265,8 +277,8 @@ export class CampaignStatsService {
       totalRecipients: stats.totalRecipients,
       sentCount: stats.sentCount,
       failedCount: stats.failedCount,
+      skippedCount: stats.skippedCount,
       processedCount: stats.sentCount + stats.failedCount + stats.skippedCount,
-      metadata: { skippedCount: stats.skippedCount },
     });
 
     return stats;

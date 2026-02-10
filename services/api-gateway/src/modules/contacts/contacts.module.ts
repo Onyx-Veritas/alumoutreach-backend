@@ -27,7 +27,7 @@ import { ContactTimelineEvent } from './entities/contact-timeline-event.entity';
 import { LoggerModule } from '../../common/logger/logger.module';
 import { AppLoggerService } from '../../common/logger/app-logger.service';
 
-@Module({
+@Module({ 
   imports: [
     // Register all contact-related entities
     TypeOrmModule.forFeature([

@@ -219,11 +219,11 @@ export class PipelineRetryService implements OnModuleInit, OnModuleDestroy {
       return job;
     }
 
-    // Reset job for immediate retry
+    // Reset job for immediate retry (state machine enforced: DEAD/FAILED → PENDING)
     const nextAttemptAt = new Date();
-    const updated = await this.pipelineRepository.updateJobStatus(jobId, PipelineJobStatus.PENDING, {
+    const updated = await this.pipelineRepository.transitionJobState(jobId, PipelineJobStatus.PENDING, {
       nextAttemptAt,
-      errorMessage: undefined,
+      errorMessage: undefined as unknown as string,
     });
 
     this.logger.logOperationEnd('manual retry job', startTime, {

@@ -5,6 +5,7 @@ import { BullModule } from '@nestjs/bullmq';
 // Entities
 import { PipelineJob, PipelineFailure } from './entities';
 import { CampaignRun } from '../campaigns/entities/campaign-run.entity';
+import { Campaign } from '../campaigns/entities/campaign.entity';
 
 // Repository
 import { PipelineRepository } from './repositories/pipeline.repository';
@@ -30,7 +31,7 @@ import { QueueConfigService } from '../queue/services';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PipelineJob, PipelineFailure, CampaignRun]),
+    TypeOrmModule.forFeature([PipelineJob, PipelineFailure, CampaignRun, Campaign]),
     // Register queue for producer (will use global BullMQ config from QueueModule)
     BullModule.registerQueue({
       name: QUEUE_NAMES.PIPELINE_JOBS,

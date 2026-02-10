@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
 import * as nodemailer from 'nodemailer';
 import { Transporter } from 'nodemailer';
+import sgMail from '@sendgrid/mail';
+import { MailDataRequired } from '@sendgrid/helpers/classes/mail';
 import { AppLoggerService } from '../../../../common/logger/app-logger.service';
 import { CampaignChannel } from '../../entities/campaign.enums';
 
@@ -11,9 +13,10 @@ import { CampaignChannel } from '../../entities/campaign.enums';
  * - mock: Simulates sending (95% success rate, no actual email)
  * - console: Logs email content to console (100% success)
  * - mailhog: Sends to Mailhog SMTP for testing (real SMTP)
- * - smtp: Production SMTP (future: SendGrid, SES, etc.)
+ * - smtp: Production SMTP (future: SES, etc.)
+ * - sendgrid: Production email via SendGrid API
  */
-export type EmailMode = 'mock' | 'console' | 'mailhog' | 'smtp';
+export type EmailMode = 'mock' | 'console' | 'mailhog' | 'smtp' | 'sendgrid';
 
 /**
  * Error codes for granular error classification
@@ -79,6 +82,8 @@ export class EmailSenderService implements OnModuleInit {
   private readonly logger: AppLoggerService;
   private transporter: Transporter | null = null;
   private mode: EmailMode = 'mock';
+  private sendgridConfigured = false;
+  private fromEmail: string = 'noreply@alumoutreach.com';
   readonly channel = CampaignChannel.EMAIL;
 
   constructor(private readonly configService: ConfigService) {
@@ -87,16 +92,32 @@ export class EmailSenderService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    // Read mode from environment: EMAIL_MODE=mock|console|mailhog|smtp
+    // Read mode from environment: EMAIL_MODE=mock|console|mailhog|smtp|sendgrid
     this.mode = (this.configService.get<string>('EMAIL_MODE', 'mock') as EmailMode);
-    
+    this.fromEmail = this.configService.get<string>('EMAIL_FROM', 'noreply@alumoutreach.com');
+
     this.logger.info(`Email sender initialized in ${this.mode.toUpperCase()} mode`);
 
     if (this.mode === 'mailhog') {
       await this.initMailhogTransporter();
     } else if (this.mode === 'smtp') {
       await this.initSmtpTransporter();
+    } else if (this.mode === 'sendgrid') {
+      this.initSendGrid();
     }
+  }
+
+  private initSendGrid() {
+    const apiKey = this.configService.get<string>('SENDGRID_API_KEY');
+    if (!apiKey || apiKey === 'your-sendgrid-api-key') {
+      this.logger.warn('SENDGRID_API_KEY not configured, falling back to console mode');
+      this.mode = 'console';
+      return;
+    }
+
+    sgMail.setApiKey(apiKey);
+    this.sendgridConfigured = true;
+    this.logger.info('SendGrid API client initialized');
   }
 
   private async initMailhogTransporter() {
@@ -123,9 +144,147 @@ export class EmailSenderService implements OnModuleInit {
   }
 
   private async initSmtpTransporter() {
-    // Future: Configure production SMTP (SendGrid, SES, etc.)
+    // Future: Configure production SMTP (SES, etc.)
     this.logger.warn('SMTP mode not yet implemented, falling back to console mode');
     this.mode = 'console';
+  }
+
+  /**
+   * Send email via SendGrid API
+   */
+  private async sendViaSendGrid(request: SendRequest, correlationId: string): Promise<SendResult> {
+    if (!this.sendgridConfigured) {
+      return this.sendViaConsole(request, correlationId);
+    }
+
+    const fromEmail = request.fromEmail || this.fromEmail;
+    const fromName = request.fromName || 'AlumOutreach';
+
+    const msg: MailDataRequired = {
+      to: request.to,
+      from: { email: fromEmail, name: fromName },
+      subject: request.subject,
+      html: request.htmlBody,
+      text: request.textBody || this.stripHtml(request.htmlBody),
+      headers: {
+        'X-Correlation-ID': correlationId,
+        'X-Contact-ID': request.contactId,
+        ...(request.metadata?.campaignId && { 'X-Campaign-ID': String(request.metadata.campaignId) }),
+        ...(request.metadata?.jobId && { 'X-Job-ID': String(request.metadata.jobId) }),
+        ...request.headers,
+      },
+      customArgs: {
+        correlationId,
+        contactId: request.contactId,
+        campaignId: request.metadata?.campaignId ? String(request.metadata.campaignId) : undefined,
+        jobId: request.metadata?.jobId ? String(request.metadata.jobId) : undefined,
+        tenantId: request.metadata?.tenantId ? String(request.metadata.tenantId) : undefined,
+      },
+      trackingSettings: {
+        clickTracking: { enable: true, enableText: false },
+        openTracking: { enable: true },
+      },
+    };
+
+    if (request.replyTo) {
+      msg.replyTo = request.replyTo;
+    }
+
+    try {
+      const [response] = await sgMail.send(msg);
+
+      // SendGrid returns x-message-id in response headers
+      const providerMessageId = response.headers?.['x-message-id'] as string | undefined;
+
+      this.logger.info('Email sent via SendGrid', {
+        to: request.to,
+        subject: request.subject,
+        providerMessageId,
+        statusCode: response.statusCode,
+        correlationId,
+      });
+
+      return {
+        success: true,
+        providerMessageId,
+        metadata: {
+          provider: 'sendgrid',
+          sentAt: new Date().toISOString(),
+          statusCode: response.statusCode,
+        },
+      };
+    } catch (error: unknown) {
+      const sgError = error as { code?: number; response?: { body?: { errors?: Array<{ message: string; field?: string }> } }; message?: string };
+      const statusCode = sgError.code || sgError.response?.body?.errors?.[0] ? 400 : 500;
+      const errorMessage = sgError.response?.body?.errors?.[0]?.message || sgError.message || 'SendGrid send failed';
+
+      this.logger.error(`SendGrid send failed: ${errorMessage}`, undefined, {
+        to: request.to,
+        statusCode,
+        correlationId,
+      });
+
+      const errorInfo = this.classifySendGridError(statusCode, errorMessage);
+
+      return {
+        success: false,
+        error: errorMessage,
+        errorCode: errorInfo.code,
+        retryable: errorInfo.retryable,
+        metadata: {
+          provider: 'sendgrid',
+          statusCode,
+        },
+      };
+    }
+  }
+
+  /**
+   * Classify SendGrid API errors into error codes
+   */
+  private classifySendGridError(statusCode: number, message: string): { code: EmailErrorCode; retryable: boolean } {
+    const msgLower = message.toLowerCase();
+
+    // 401 Unauthorized — API key issue, not retryable
+    if (statusCode === 401) {
+      return { code: EmailErrorCode.BLOCKED_ADDRESS, retryable: false };
+    }
+
+    // 403 Forbidden — sender not verified, not retryable
+    if (statusCode === 403) {
+      return { code: EmailErrorCode.BLOCKED_ADDRESS, retryable: false };
+    }
+
+    // 429 Rate limited — retryable
+    if (statusCode === 429) {
+      return { code: EmailErrorCode.RATE_LIMITED, retryable: true };
+    }
+
+    // 5xx Server errors — retryable
+    if (statusCode >= 500) {
+      return { code: EmailErrorCode.SERVER_ERROR, retryable: true };
+    }
+
+    // Content-based classification for 400-level errors
+    if (msgLower.includes('bounce') || msgLower.includes('does not exist')) {
+      return { code: EmailErrorCode.HARD_BOUNCE, retryable: false };
+    }
+    if (msgLower.includes('unsubscribe') || msgLower.includes('suppression')) {
+      return { code: EmailErrorCode.UNSUBSCRIBED, retryable: false };
+    }
+    if (msgLower.includes('spam') || msgLower.includes('complaint')) {
+      return { code: EmailErrorCode.SPAM_COMPLAINT, retryable: false };
+    }
+    if (msgLower.includes('invalid') && (msgLower.includes('email') || msgLower.includes('address'))) {
+      return { code: EmailErrorCode.INVALID_EMAIL, retryable: false };
+    }
+
+    // 400-level defaults to non-retryable
+    if (statusCode >= 400 && statusCode < 500) {
+      return { code: EmailErrorCode.UNKNOWN, retryable: false };
+    }
+
+    return { code: EmailErrorCode.UNKNOWN, retryable: true };
   }
 
   async send(request: SendRequest, correlationId: string): Promise<SendResult> {
@@ -140,6 +299,9 @@ export class EmailSenderService implements OnModuleInit {
       let result: SendResult;
 
       switch (this.mode) {
+        case 'sendgrid':
+          result = await this.sendViaSendGrid(request, correlationId);
+          break;
         case 'mailhog':
           result = await this.sendViaMailhog(request, correlationId);
           break;

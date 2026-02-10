@@ -58,6 +58,9 @@ export class CampaignRun {
   @Column({ name: 'failed_count', default: 0 })
   failedCount: number;
 
+  @Column({ name: 'skipped_count', default: 0 })
+  skippedCount: number;
+
   // Metadata for additional run info
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, unknown>;
