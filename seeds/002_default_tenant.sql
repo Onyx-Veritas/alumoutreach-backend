@@ -72,7 +72,7 @@ SELECT
     '11111111-1111-1111-1111-111111111111',
     r.id,
     'admin@demo.alumoutreach.local',
-    '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW',  -- admin123
+    '$2a$10$J7wbmzluzyQDMQaTrirdHOrRtYGN46wFAh39G0ahv.O.vzvOmQpVu',  -- admin123
     'Demo Admin',
     true,
     true
