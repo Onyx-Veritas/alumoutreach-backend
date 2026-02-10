@@ -14,8 +14,10 @@ import { Request } from 'express';
 import { WebhookProcessorService } from '../services/webhook-processor.service';
 import { SendGridWebhookEvent } from '../dto/sendgrid-webhook.dto';
 import { AppLoggerService } from '../../../common/logger/app-logger.service';
+import { Public } from '../../auth/decorators/public.decorator';
 
 @ApiTags('Webhooks')
+@Public()
 @Controller('webhooks')
 export class WebhookController {
   private readonly logger: AppLoggerService;

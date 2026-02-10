@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiHeader, ApiQuery, ApiParam } fro
 import { IsOptional, IsNumber, IsString, IsArray, Min, Max } from 'class-validator';
 import { DevOnlyGuard } from '../guards/dev-only.guard';
 import { QueueMonitorService, QueueDashboard, JobSummary } from '../services/queue-monitor.service';
+import { Public } from '../../modules/auth/decorators/public.decorator';
 
 // ==================== DTOs ====================
 
@@ -36,6 +37,7 @@ class GetCampaignJobsQueryDto extends GetJobsQueryDto {
 @Controller('dev/queues')
 @ApiTags('Dev Playground - Queue Monitor')
 @ApiHeader({ name: 'x-tenant-id', required: true, description: 'Tenant ID' })
+@Public()
 @UseGuards(DevOnlyGuard)
 export class QueueController {
   private readonly logger = new Logger(QueueController.name);

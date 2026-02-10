@@ -8,10 +8,13 @@ export interface TenantContext {
 export const Tenant = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): TenantContext => {
     const request = ctx.switchToHttp().getRequest<Request>();
-    const tenantId = request.headers['x-tenant-id'] as string;
+
+    // Prefer JWT-authenticated tenantId, fall back to header
+    const tenantId = (request as any).user?.tenantId
+      || request.headers['x-tenant-id'] as string;
 
     if (!tenantId) {
-      throw new Error('Tenant ID is required. Please provide X-Tenant-ID header.');
+      throw new Error('Tenant ID is required. Authenticate or provide X-Tenant-ID header.');
     }
 
     return { tenantId };
@@ -21,10 +24,13 @@ export const Tenant = createParamDecorator(
 export const TenantId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string => {
     const request = ctx.switchToHttp().getRequest<Request>();
-    const tenantId = request.headers['x-tenant-id'] as string;
+
+    // Prefer JWT-authenticated tenantId, fall back to header
+    const tenantId = (request as any).user?.tenantId
+      || request.headers['x-tenant-id'] as string;
 
     if (!tenantId) {
-      throw new Error('Tenant ID is required. Please provide X-Tenant-ID header.');
+      throw new Error('Tenant ID is required. Authenticate or provide X-Tenant-ID header.');
     }
 
     return tenantId;

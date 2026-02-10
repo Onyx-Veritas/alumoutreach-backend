@@ -2,7 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 
 // Modules
 import { ContactsModule } from './modules/contacts/contacts.module';
@@ -18,6 +18,12 @@ import { HealthModule } from './modules/health/health.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { ChannelsModule } from './modules/channels/channels.module';
 import { DevModule } from './dev/dev.module';
+import { AuthModule } from './modules/auth/auth.module';
+
+// Auth Guards (applied globally)
+import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+import { ApiKeyGuard } from './modules/auth/guards/api-key.guard';
+import { TenantGuard } from './modules/auth/guards/tenant.guard';
 
 // Logging
 import { LoggerModule } from './common/logger/logger.module';
@@ -68,6 +74,11 @@ import { SequenceRun } from './modules/sequences/entities/sequence-run.entity';
 import { InboxThread } from './modules/inbox/entities/inbox-thread.entity';
 import { InboxMessage } from './modules/inbox/entities/inbox-message.entity';
 import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
+
+// Entities - Auth
+import { User } from './modules/auth/entities/user.entity';
+import { Role } from './modules/auth/entities/role.entity';
+import { ApiKey } from './modules/auth/entities/api-key.entity';
 
 @Module({
   imports: [
@@ -129,6 +140,10 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
           InboxThread,
           InboxMessage,
           InboxActivity,
+          // Auth entities
+          User,
+          Role,
+          ApiKey,
         ],
         // CRITICAL: synchronize is ALWAYS false
         // SQL migrations are the source of truth for database schema
@@ -157,6 +172,9 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
     // Dev Playground (load FIRST to avoid module ordering issues)
     DevModule,
 
+    // Auth (JWT, API keys, tenant isolation)
+    AuthModule,
+
     // Feature Modules
     HealthModule,
     ContactsModule,
@@ -175,6 +193,19 @@ import { InboxActivity } from './modules/inbox/entities/inbox-activity.entity';
     {
       provide: APP_FILTER,
       useClass: GlobalExceptionFilter,
+    },
+    // Global auth guards (order matters: JWT → API Key → Tenant)
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ApiKeyGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: TenantGuard,
     },
     // Schema validation at startup (compares DB to expected schema)
     SchemaGuardService,

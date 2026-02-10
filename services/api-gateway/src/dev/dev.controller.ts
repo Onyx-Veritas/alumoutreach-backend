@@ -19,6 +19,7 @@ import { DemoSeedService, DemoPreset, SeedResult } from './services/demo-seed.se
 import { DevOnlyGuard } from './guards/dev-only.guard';
 import { TenantId } from '../common/decorators/tenant.decorator';
 import { CorrelationId } from '../common/decorators/correlation-id.decorator';
+import { Public } from '../modules/auth/decorators/public.decorator';
 
 console.log('=== DEV CONTROLLER FILE LOADED ===');
 
@@ -232,6 +233,7 @@ class RunPartialFailureScenarioDto {
 @Controller('dev')
 @ApiTags('Dev Playground')
 @ApiHeader({ name: 'x-tenant-id', required: true, description: 'Tenant ID' })
+@Public()
 @UseGuards(DevOnlyGuard)
 export class DevController {
   private readonly logger = new Logger(DevController.name);
